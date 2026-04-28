@@ -6,10 +6,13 @@ A high-performance, non-root, userland TCP scanner built in pure Go. Inspired by
 - **High Concurrency**: Goroutine-based bounded worker pool capable of thousands of concurrent connections.
 - **No Root Required**: Built purely on standard TCP dialing, avoiding the need for elevated privileges or raw socket access.
 - **Multiple Target Inputs**: Supports single IPs, CIDR ranges, and files containing lists of IPs/CIDRs.
-- **Flexible Port Formats**: Single port (`80`), comma-separated lists (`80,443`), and ranges (`1-1000`).
+- **Flexible Port Formats**: Single port (`80`), comma-separated lists (`80,443`), ranges (`1-1000`), and built-in aliases for `top100` and `top1000` ports.
+- **Target Exclusion**: Exclude specific IPs, CIDRs, or lists from files using `-e` or `--exclude`.
 - **Rate Limiting**: Configurable maximum connections per second.
 - **Output Formats**: Standard plain text or JSON output, with optional file saving.
 - **Optional Banner Grabbing**: Identifies basic banners (e.g., SSH, HTTP) from open ports.
+- **Retries**: Specify the number of retries per port scan using the `--retries` flag.
+- **Progress Tracking**: Periodic progress updates in the console via the `--progress` flag.
 
 ## Installation
 
@@ -28,6 +31,9 @@ go build -o synapse ./cmd/synapse
 
 # Scan from a file containing targets, save as JSON, and enable banner grabbing
 ./synapse -t targets.txt -p 22,80 -o results.json --json --banner
+
+# Scan using top1000 ports, excluding specific IPs, with retries and progress tracking
+./synapse -t 10.0.0.0/16 -p top1000 -e exclusions.txt --retries 1 --progress
 ```
 
 ### Configuration via YAML
@@ -37,9 +43,12 @@ You can also use a YAML configuration file to set defaults:
 ```yaml
 target: "192.168.1.0/24"
 ports: "80,443,8080"
+exclude: "192.168.1.5"
 concurrency: 2000
 rate_limit: 5000
 timeout_ms: 800
+retries: 1
+progress: true
 json: true
 banner: true
 ```

@@ -42,7 +42,7 @@ func TestGenerator_Generate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGenerator(tt.target)
+			g := NewGenerator(tt.target, "")
 			out, errc := g.Generate(context.Background())
 
 			var got []string
@@ -82,7 +82,7 @@ func TestGenerator_GenerateFromFile(t *testing.T) {
 	}
 	f.Close()
 
-	g := NewGenerator(f.Name())
+	g := NewGenerator(f.Name(), "")
 	out, errc := g.Generate(context.Background())
 
 	var got []string
@@ -104,5 +104,43 @@ func TestGenerator_GenerateFromFile(t *testing.T) {
 
 	if !hasErr {
 		t.Errorf("Generate() from file expected error due to invalid_ip")
+	}
+}
+
+func TestGenerator_GenerateWithExclude(t *testing.T) {
+	content := "192.168.1.2\n192.168.1.5"
+	f, err := os.CreateTemp("", "excl-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	g := NewGenerator("192.168.1.0/29", f.Name())
+	out, errc := g.Generate(context.Background())
+
+	var got []string
+	for ip := range out {
+		got = append(got, ip)
+	}
+
+	var hasErr bool
+	for e := range errc {
+		if e != nil {
+			hasErr = true
+		}
+	}
+
+	want := []string{"192.168.1.0", "192.168.1.1", "192.168.1.3", "192.168.1.4", "192.168.1.6", "192.168.1.7"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Generate() with exclude = %v, want %v", got, want)
+	}
+
+	if hasErr {
+		t.Errorf("Generate() with exclude expected no error")
 	}
 }

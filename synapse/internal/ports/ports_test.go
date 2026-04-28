@@ -38,3 +38,21 @@ func TestParse(t *testing.T) {
 		})
 	}
 }
+
+func TestParseTop(t *testing.T) {
+	got100, err := Parse("top100")
+	if err != nil {
+		t.Errorf("Parse(top100) error = %v", err)
+	}
+	if len(got100) < 90 {
+		t.Errorf("Parse(top100) length = %d, want around 100", len(got100))
+	}
+
+	got1000, err := Parse("top1000")
+	if err != nil {
+		t.Errorf("Parse(top1000) error = %v", err)
+	}
+	if len(got1000) < 900 {
+		t.Errorf("Parse(top1000) length = %d, want around 1000", len(got1000))
+	}
+}

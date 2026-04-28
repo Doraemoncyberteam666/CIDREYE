@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -17,13 +18,17 @@ type Config struct {
 	RateLimit   int
 	Timeout     time.Duration
 	Banner      bool
+	Retries     int
+	Progress    bool
 }
 
 // Scanner orchestrates the scanning process.
 type Scanner struct {
-	cfg     Config
-	limiter *rate.Limiter
-	writer  *output.Writer
+	cfg            Config
+	limiter        *rate.Limiter
+	writer         *output.Writer
+	tasksCompleted atomic.Uint64
+	openPortsFound atomic.Uint64
 }
 
 // New creates a new Scanner.
@@ -73,7 +78,42 @@ func (s *Scanner) Run(ctx context.Context, ips <-chan string, ports []int) error
 		}
 	}()
 
-	wg.Wait()
+	var progressWg sync.WaitGroup
+	if s.cfg.Progress {
+		progressWg.Add(1)
+		go func() {
+			defer progressWg.Done()
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+
+			// Create a done channel to signal when worker pool is finished
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.writer.Log("Scanned: %d | Open: %d", s.tasksCompleted.Load(), s.openPortsFound.Load())
+				case <-done:
+					// Print final stats
+					s.writer.Log("Final Scanned: %d | Final Open: %d", s.tasksCompleted.Load(), s.openPortsFound.Load())
+					return
+				}
+			}
+		}()
+	} else {
+		wg.Wait()
+	}
+
+	if s.cfg.Progress {
+		progressWg.Wait()
+	}
+
 	return nil
 }
 
@@ -97,18 +137,32 @@ func (s *Scanner) worker(ctx context.Context, wg *sync.WaitGroup, tasks <-chan S
 }
 
 func (s *Scanner) scanPort(ctx context.Context, dialer *net.Dialer, task ScanTask) {
+	defer s.tasksCompleted.Add(1)
+
 	target := fmt.Sprintf("%s:%d", task.IP, task.Port)
 
-	// Context for the specific dial operation, bounded by dialer timeout
-	dialCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
-	defer cancel()
+	var conn net.Conn
+	var err error
 
-	conn, err := dialer.DialContext(dialCtx, "tcp", target)
+	for i := 0; i <= s.cfg.Retries; i++ {
+		// Context for the specific dial operation, bounded by dialer timeout
+		dialCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
+
+		conn, err = dialer.DialContext(dialCtx, "tcp", target)
+		cancel()
+
+		if err == nil {
+			break
+		}
+	}
+
 	if err != nil {
-		// Port closed or filtered
+		// Port closed or filtered after retries
 		return
 	}
 	defer conn.Close()
+
+	s.openPortsFound.Add(1)
 
 	res := output.Result{
 		IP:    task.IP,

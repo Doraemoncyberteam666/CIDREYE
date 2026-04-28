@@ -27,20 +27,26 @@ type Config struct {
 	JSON        bool   `yaml:"json"`
 	Quiet       bool   `yaml:"quiet"`
 	Banner      bool   `yaml:"banner"`
+	Exclude     string `yaml:"exclude"`
+	Retries     int    `yaml:"retries"`
+	Progress    bool   `yaml:"progress"`
 }
 
 func main() {
 	var (
-		configFile string
-		targetFlag string
-		portsFlag  string
-		concFlag   int
-		rateFlag   int
-		timeFlag   int
-		outFlag    string
-		jsonFlag   bool
-		quietFlag  bool
-		bannerFlag bool
+		configFile  string
+		targetFlag  string
+		portsFlag   string
+		concFlag    int
+		rateFlag    int
+		timeFlag    int
+		outFlag     string
+		jsonFlag    bool
+		quietFlag   bool
+		bannerFlag  bool
+		excludeFlag string
+		retriesFlag int
+		progFlag    bool
 	)
 
 	flag.StringVar(&configFile, "config", "", "Path to YAML config file")
@@ -58,6 +64,10 @@ func main() {
 	flag.BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	flag.BoolVar(&quietFlag, "quiet", false, "Quiet mode (only print results)")
 	flag.BoolVar(&bannerFlag, "banner", false, "Enable banner grabbing")
+	flag.StringVar(&excludeFlag, "e", "", "IPs, CIDRs, or file containing targets to exclude (alias for --exclude)")
+	flag.StringVar(&excludeFlag, "exclude", "", "IPs, CIDRs, or file containing targets to exclude")
+	flag.IntVar(&retriesFlag, "retries", 0, "Number of retries for port scan")
+	flag.BoolVar(&progFlag, "progress", false, "Print periodic progress updates")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SYNapse - High-performance userland TCP scanner\n\n")
@@ -75,6 +85,8 @@ func main() {
 		JSON:        jsonFlag,
 		Quiet:       quietFlag,
 		Banner:      bannerFlag,
+		Retries:     retriesFlag,
+		Progress:    progFlag,
 	}
 
 	// Load from YAML if provided
@@ -90,8 +102,7 @@ func main() {
 		}
 	}
 
-	// Override with CLI flags if provided (CLI takes precedence over config file for strings/bools usually,
-	// but here we just take whichever is not empty if flag was passed, for simplicity we overwrite if CLI flag is not default or empty)
+	// Override with CLI flags if provided
 	if targetFlag != "" {
 		cfg.Target = targetFlag
 	}
@@ -100,6 +111,17 @@ func main() {
 	}
 	if outFlag != "" {
 		cfg.Output = outFlag
+	}
+	if excludeFlag != "" {
+		cfg.Exclude = excludeFlag
+	}
+	// Note: for integers/bools, typical CLI tools assume if flag > 0 or == true, we override config file.
+	// We'll keep it simple: CLI defaults apply if config file didn't overwrite.
+	if retriesFlag > 0 {
+		cfg.Retries = retriesFlag
+	}
+	if progFlag {
+		cfg.Progress = progFlag
 	}
 
 	// Check required fields
@@ -126,8 +148,12 @@ func main() {
 	if !cfg.Quiet {
 		writer.Log("SYNapse Scanner starting...")
 		writer.Log("Target: %s", cfg.Target)
+		if cfg.Exclude != "" {
+			writer.Log("Exclude: %s", cfg.Exclude)
+		}
 		writer.Log("Ports: %s", cfg.Ports)
 		writer.Log("Concurrency: %d", cfg.Concurrency)
+		writer.Log("Retries: %d", cfg.Retries)
 	}
 
 	// Parse Ports
@@ -151,7 +177,7 @@ func main() {
 	}()
 
 	// Setup Target Generator
-	targetGen := targets.NewGenerator(cfg.Target)
+	targetGen := targets.NewGenerator(cfg.Target, cfg.Exclude)
 	ipsCh, errCh := targetGen.Generate(ctx)
 
 	go func() {
@@ -168,6 +194,8 @@ func main() {
 		RateLimit:   cfg.RateLimit,
 		Timeout:     time.Duration(cfg.TimeoutMs) * time.Millisecond,
 		Banner:      cfg.Banner,
+		Retries:     cfg.Retries,
+		Progress:    cfg.Progress,
 	}
 
 	sc := scanner.New(scanCfg, writer)

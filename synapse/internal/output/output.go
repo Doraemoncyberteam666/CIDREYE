@@ -17,11 +17,11 @@ type Result struct {
 
 // Writer handles thread-safe writing of scan results.
 type Writer struct {
-	mu     sync.Mutex
-	file   *os.File
-	json   bool
-	quiet  bool
-	out    *os.File // usually os.Stdout
+	mu    sync.Mutex
+	file  *os.File
+	json  bool
+	quiet bool
+	out   *os.File // usually os.Stdout
 }
 
 // NewWriter creates a new output Writer.
