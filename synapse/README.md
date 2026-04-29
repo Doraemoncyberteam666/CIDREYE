@@ -13,6 +13,7 @@ A high-performance, non-root, userland TCP scanner built in pure Go. Inspired by
 - **Optional Banner Grabbing**: Identifies basic banners (e.g., SSH, HTTP) from open ports.
 - **Retries**: Specify the number of retries per port scan using the `--retries` flag.
 - **Progress Tracking**: Periodic progress updates in the console via the `--progress` flag.
+- **Optional Nuclei Pipeline**: Run post-scan nuclei checks using automatic technology detection (`-as`), optional tag filtering, minimum severity filtering, text-file output, and Telegram delivery.
 
 ## Installation
 
@@ -34,6 +35,9 @@ go build -o synapse ./cmd/synapse
 
 # Scan using top1000 ports, excluding specific IPs, with retries and progress tracking
 ./synapse -t 10.0.0.0/16 -p top1000 -e exclusions.txt --retries 1 --progress
+
+# Run optional nuclei pipeline with technology detection and minimum severity HIGH
+./synapse -t 192.168.1.0/24 -p 80,443 --nuclei --nuclei-min-severity high --nuclei-tags cve,rce --nuclei-output nuclei-results.txt
 ```
 
 ### Configuration via YAML
@@ -51,6 +55,15 @@ retries: 1
 progress: true
 json: true
 banner: true
+nuclei:
+  enabled: true
+  tags: "cve,rce"
+  min_severity: "high"
+  output_file: "nuclei-results.txt"
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
 ```
 
 Run with the config file:

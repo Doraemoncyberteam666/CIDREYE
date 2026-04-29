@@ -18,35 +18,43 @@ import (
 )
 
 type Config struct {
-	Target      string `yaml:"target"`
-	Ports       string `yaml:"ports"`
-	Concurrency int    `yaml:"concurrency"`
-	RateLimit   int    `yaml:"rate_limit"`
-	TimeoutMs   int    `yaml:"timeout_ms"`
-	Output      string `yaml:"output"`
-	JSON        bool   `yaml:"json"`
-	Quiet       bool   `yaml:"quiet"`
-	Banner      bool   `yaml:"banner"`
-	Exclude     string `yaml:"exclude"`
-	Retries     int    `yaml:"retries"`
-	Progress    bool   `yaml:"progress"`
+	Target      string       `yaml:"target"`
+	Ports       string       `yaml:"ports"`
+	Concurrency int          `yaml:"concurrency"`
+	RateLimit   int          `yaml:"rate_limit"`
+	TimeoutMs   int          `yaml:"timeout_ms"`
+	Output      string       `yaml:"output"`
+	JSON        bool         `yaml:"json"`
+	Quiet       bool         `yaml:"quiet"`
+	Banner      bool         `yaml:"banner"`
+	Exclude     string       `yaml:"exclude"`
+	Retries     int          `yaml:"retries"`
+	Progress    bool         `yaml:"progress"`
+	Nuclei      NucleiConfig `yaml:"nuclei"`
 }
 
 func main() {
 	var (
-		configFile  string
-		targetFlag  string
-		portsFlag   string
-		concFlag    int
-		rateFlag    int
-		timeFlag    int
-		outFlag     string
-		jsonFlag    bool
-		quietFlag   bool
-		bannerFlag  bool
-		excludeFlag string
-		retriesFlag int
-		progFlag    bool
+		configFile        string
+		targetFlag        string
+		portsFlag         string
+		concFlag          int
+		rateFlag          int
+		timeFlag          int
+		outFlag           string
+		jsonFlag          bool
+		quietFlag         bool
+		bannerFlag        bool
+		excludeFlag       string
+		retriesFlag       int
+		progFlag          bool
+		nucleiFlag        bool
+		nucleiTags        string
+		nucleiMinSeverity string
+		nucleiOutput      string
+		telegramFlag      bool
+		telegramToken     string
+		telegramChatID    string
 	)
 
 	flag.StringVar(&configFile, "config", "", "Path to YAML config file")
@@ -68,6 +76,13 @@ func main() {
 	flag.StringVar(&excludeFlag, "exclude", "", "IPs, CIDRs, or file containing targets to exclude")
 	flag.IntVar(&retriesFlag, "retries", 0, "Number of retries for port scan")
 	flag.BoolVar(&progFlag, "progress", false, "Print periodic progress updates")
+	flag.BoolVar(&nucleiFlag, "nuclei", false, "Enable optional nuclei post-scan pipeline with automatic technology detection")
+	flag.StringVar(&nucleiTags, "nuclei-tags", "", "Comma-separated nuclei tags filter")
+	flag.StringVar(&nucleiMinSeverity, "nuclei-min-severity", "", "Minimum nuclei severity (info|low|medium|high|critical)")
+	flag.StringVar(&nucleiOutput, "nuclei-output", "", "Nuclei output text file")
+	flag.BoolVar(&telegramFlag, "telegram", false, "Send nuclei output to Telegram")
+	flag.StringVar(&telegramToken, "telegram-token", "", "Telegram bot token")
+	flag.StringVar(&telegramChatID, "telegram-chat-id", "", "Telegram chat ID")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SYNapse - High-performance userland TCP scanner\n\n")
@@ -76,6 +91,10 @@ func main() {
 	}
 
 	flag.Parse()
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
 
 	// Default config
 	cfg := Config{
@@ -122,6 +141,27 @@ func main() {
 	}
 	if progFlag {
 		cfg.Progress = progFlag
+	}
+	if setFlags["nuclei"] {
+		cfg.Nuclei.Enabled = nucleiFlag
+	}
+	if nucleiTags != "" {
+		cfg.Nuclei.Tags = nucleiTags
+	}
+	if nucleiMinSeverity != "" {
+		cfg.Nuclei.MinSeverity = nucleiMinSeverity
+	}
+	if nucleiOutput != "" {
+		cfg.Nuclei.OutputFile = nucleiOutput
+	}
+	if telegramFlag {
+		cfg.Nuclei.Telegram.Enabled = telegramFlag
+	}
+	if telegramToken != "" {
+		cfg.Nuclei.Telegram.BotToken = telegramToken
+	}
+	if telegramChatID != "" {
+		cfg.Nuclei.Telegram.ChatID = telegramChatID
 	}
 
 	// Check required fields
@@ -208,4 +248,15 @@ func main() {
 	if !cfg.Quiet {
 		writer.Log("Scan completed in %v", time.Since(startTime))
 	}
+
+	if cfg.Nuclei.Enabled {
+		if err := runNucleiPipeline(writer, sc.OpenTargets(), cfg.Nuclei); err != nil {
+			writer.Log("Nuclei pipeline error: %v", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func runNucleiPipeline(writer *output.Writer, openTargets []string, cfg NucleiConfig) error {
+	return RunNucleiPipeline(writer, openTargets, cfg)
 }

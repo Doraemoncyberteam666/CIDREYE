@@ -29,6 +29,8 @@ type Scanner struct {
 	writer         *output.Writer
 	tasksCompleted atomic.Uint64
 	openPortsFound atomic.Uint64
+	openTargetsMu  sync.Mutex
+	openTargets    map[string]struct{}
 }
 
 // New creates a new Scanner.
@@ -41,9 +43,10 @@ func New(cfg Config, w *output.Writer) *Scanner {
 	}
 
 	return &Scanner{
-		cfg:     cfg,
-		limiter: limiter,
-		writer:  w,
+		cfg:         cfg,
+		limiter:     limiter,
+		writer:      w,
+		openTargets: make(map[string]struct{}),
 	}
 }
 
@@ -163,6 +166,9 @@ func (s *Scanner) scanPort(ctx context.Context, dialer *net.Dialer, task ScanTas
 	defer conn.Close()
 
 	s.openPortsFound.Add(1)
+	s.openTargetsMu.Lock()
+	s.openTargets[fmt.Sprintf("%s:%d", task.IP, task.Port)] = struct{}{}
+	s.openTargetsMu.Unlock()
 
 	res := output.Result{
 		IP:    task.IP,
@@ -179,6 +185,18 @@ func (s *Scanner) scanPort(ctx context.Context, dialer *net.Dialer, task ScanTas
 	if err := s.writer.WriteResult(res); err != nil {
 		s.writer.Log("error writing result: %v", err)
 	}
+}
+
+// OpenTargets returns unique open IP:port targets discovered during the scan.
+func (s *Scanner) OpenTargets() []string {
+	s.openTargetsMu.Lock()
+	defer s.openTargetsMu.Unlock()
+
+	targets := make([]string, 0, len(s.openTargets))
+	for target := range s.openTargets {
+		targets = append(targets, target)
+	}
+	return targets
 }
 
 func grabBanner(conn net.Conn, timeout time.Duration) string {
