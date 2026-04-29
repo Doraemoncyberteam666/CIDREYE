@@ -4,8 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,35 +24,57 @@ import (
 )
 
 type Config struct {
-	Target      string `yaml:"target"`
-	Ports       string `yaml:"ports"`
-	Concurrency int    `yaml:"concurrency"`
-	RateLimit   int    `yaml:"rate_limit"`
-	TimeoutMs   int    `yaml:"timeout_ms"`
-	Output      string `yaml:"output"`
-	JSON        bool   `yaml:"json"`
-	Quiet       bool   `yaml:"quiet"`
-	Banner      bool   `yaml:"banner"`
-	Exclude     string `yaml:"exclude"`
-	Retries     int    `yaml:"retries"`
-	Progress    bool   `yaml:"progress"`
+	Target      string       `yaml:"target"`
+	Ports       string       `yaml:"ports"`
+	Concurrency int          `yaml:"concurrency"`
+	RateLimit   int          `yaml:"rate_limit"`
+	TimeoutMs   int          `yaml:"timeout_ms"`
+	Output      string       `yaml:"output"`
+	JSON        bool         `yaml:"json"`
+	Quiet       bool         `yaml:"quiet"`
+	Banner      bool         `yaml:"banner"`
+	Exclude     string       `yaml:"exclude"`
+	Retries     int          `yaml:"retries"`
+	Progress    bool         `yaml:"progress"`
+	Nuclei      NucleiConfig `yaml:"nuclei"`
+}
+
+type NucleiConfig struct {
+	Enabled     bool           `yaml:"enabled"`
+	Tags        string         `yaml:"tags"`
+	MinSeverity string         `yaml:"min_severity"`
+	OutputFile  string         `yaml:"output_file"`
+	Telegram    TelegramConfig `yaml:"telegram"`
+}
+
+type TelegramConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	BotToken string `yaml:"bot_token"`
+	ChatID   string `yaml:"chat_id"`
 }
 
 func main() {
 	var (
-		configFile  string
-		targetFlag  string
-		portsFlag   string
-		concFlag    int
-		rateFlag    int
-		timeFlag    int
-		outFlag     string
-		jsonFlag    bool
-		quietFlag   bool
-		bannerFlag  bool
-		excludeFlag string
-		retriesFlag int
-		progFlag    bool
+		configFile        string
+		targetFlag        string
+		portsFlag         string
+		concFlag          int
+		rateFlag          int
+		timeFlag          int
+		outFlag           string
+		jsonFlag          bool
+		quietFlag         bool
+		bannerFlag        bool
+		excludeFlag       string
+		retriesFlag       int
+		progFlag          bool
+		nucleiFlag        bool
+		nucleiTags        string
+		nucleiMinSeverity string
+		nucleiOutput      string
+		telegramFlag      bool
+		telegramToken     string
+		telegramChatID    string
 	)
 
 	flag.StringVar(&configFile, "config", "", "Path to YAML config file")
@@ -68,6 +96,13 @@ func main() {
 	flag.StringVar(&excludeFlag, "exclude", "", "IPs, CIDRs, or file containing targets to exclude")
 	flag.IntVar(&retriesFlag, "retries", 0, "Number of retries for port scan")
 	flag.BoolVar(&progFlag, "progress", false, "Print periodic progress updates")
+	flag.BoolVar(&nucleiFlag, "nuclei", false, "Enable optional nuclei post-scan pipeline with automatic technology detection")
+	flag.StringVar(&nucleiTags, "nuclei-tags", "", "Comma-separated nuclei tags filter")
+	flag.StringVar(&nucleiMinSeverity, "nuclei-min-severity", "", "Minimum nuclei severity (info|low|medium|high|critical)")
+	flag.StringVar(&nucleiOutput, "nuclei-output", "", "Nuclei output text file")
+	flag.BoolVar(&telegramFlag, "telegram", false, "Send nuclei output to Telegram")
+	flag.StringVar(&telegramToken, "telegram-token", "", "Telegram bot token")
+	flag.StringVar(&telegramChatID, "telegram-chat-id", "", "Telegram chat ID")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SYNapse - High-performance userland TCP scanner\n\n")
@@ -122,6 +157,27 @@ func main() {
 	}
 	if progFlag {
 		cfg.Progress = progFlag
+	}
+	if nucleiFlag {
+		cfg.Nuclei.Enabled = nucleiFlag
+	}
+	if nucleiTags != "" {
+		cfg.Nuclei.Tags = nucleiTags
+	}
+	if nucleiMinSeverity != "" {
+		cfg.Nuclei.MinSeverity = nucleiMinSeverity
+	}
+	if nucleiOutput != "" {
+		cfg.Nuclei.OutputFile = nucleiOutput
+	}
+	if telegramFlag {
+		cfg.Nuclei.Telegram.Enabled = telegramFlag
+	}
+	if telegramToken != "" {
+		cfg.Nuclei.Telegram.BotToken = telegramToken
+	}
+	if telegramChatID != "" {
+		cfg.Nuclei.Telegram.ChatID = telegramChatID
 	}
 
 	// Check required fields
@@ -208,4 +264,125 @@ func main() {
 	if !cfg.Quiet {
 		writer.Log("Scan completed in %v", time.Since(startTime))
 	}
+
+	if cfg.Nuclei.Enabled {
+		if err := runNucleiPipeline(writer, sc.OpenTargets(), cfg.Nuclei); err != nil {
+			writer.Log("Nuclei pipeline error: %v", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func runNucleiPipeline(writer *output.Writer, openTargets []string, cfg NucleiConfig) error {
+	if len(openTargets) == 0 {
+		writer.Log("Nuclei pipeline enabled, but no open ports found. Skipping.")
+		return nil
+	}
+
+	minSeverity := normalizeSeverity(cfg.MinSeverity)
+	if minSeverity == "" {
+		minSeverity = "high"
+	}
+
+	targetsFile, err := os.CreateTemp("", "synapse-open-targets-*.txt")
+	if err != nil {
+		return fmt.Errorf("create nuclei targets file: %w", err)
+	}
+	defer os.Remove(targetsFile.Name())
+	defer targetsFile.Close()
+
+	for _, t := range openTargets {
+		if _, err := targetsFile.WriteString(t + "\n"); err != nil {
+			return fmt.Errorf("write nuclei targets: %w", err)
+		}
+	}
+
+	outputFile := cfg.OutputFile
+	if outputFile == "" {
+		outputFile = "nuclei-results.txt"
+	}
+
+	args := []string{"-l", targetsFile.Name(), "-as", "-severity", severityFilter(minSeverity), "-o", outputFile}
+	if cfg.Tags != "" {
+		args = append(args, "-tags", cfg.Tags)
+	}
+
+	writer.Log("Running nuclei with automatic technology detection (-as)...")
+	cmd := exec.Command("nuclei", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("run nuclei: %w", err)
+	}
+
+	if cfg.Telegram.Enabled {
+		if err := sendToTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID, outputFile); err != nil {
+			return fmt.Errorf("telegram send failed: %w", err)
+		}
+		writer.Log("Nuclei output sent to Telegram chat %s", cfg.Telegram.ChatID)
+	}
+	return nil
+}
+
+func normalizeSeverity(sev string) string {
+	s := strings.ToLower(strings.TrimSpace(sev))
+	switch s {
+	case "info", "low", "medium", "high", "critical":
+		return s
+	default:
+		return ""
+	}
+}
+
+func severityFilter(minSeverity string) string {
+	all := []string{"info", "low", "medium", "high", "critical"}
+	idx := slices.Index(all, minSeverity)
+	if idx == -1 {
+		idx = 3
+	}
+	return strings.Join(all[idx:], ",")
+}
+
+func sendToTelegram(botToken, chatID, filePath string) error {
+	if botToken == "" || chatID == "" {
+		return fmt.Errorf("telegram enabled but bot token/chat id is missing")
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	bodyReader, bodyWriter := io.Pipe()
+	mw := multipart.NewWriter(bodyWriter)
+
+	go func() {
+		defer bodyWriter.Close()
+		defer mw.Close()
+		_ = mw.WriteField("chat_id", chatID)
+		part, err := mw.CreateFormFile("document", filePath)
+		if err != nil {
+			_ = bodyWriter.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			_ = bodyWriter.CloseWithError(err)
+		}
+	}()
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", botToken)
+	req, err := http.NewRequest(http.MethodPost, url, bodyReader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("telegram API returned status %s", resp.Status)
+	}
+	return nil
 }
