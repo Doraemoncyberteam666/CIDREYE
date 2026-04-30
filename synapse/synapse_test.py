@@ -20,6 +20,13 @@ class SynapseConfigTests(unittest.TestCase):
         self.assertTrue(self.synapse._config_has_nuclei_tags({"nuclei": {"tags": "xss"}}))
         self.assertFalse(self.synapse._config_has_nuclei_tags({}))
 
+
+    def test_send_telegram_skips_empty_message(self):
+        with mock.patch("synapse.urllib.request.urlopen") as urlopen_mock:
+            ok = self.synapse.send_telegram("token", "chat", "   ")
+            self.assertTrue(ok)
+            urlopen_mock.assert_not_called()
+
     def test_run_synapse_does_not_append_cve_when_cli_tags_present(self):
         with mock.patch("synapse.subprocess.run") as run_mock, mock.patch("synapse.os.path.exists", return_value=False):
             run_mock.return_value.returncode = 0

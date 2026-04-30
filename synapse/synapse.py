@@ -16,6 +16,10 @@ HTTP_PORTS = {80, 443, 8080, 8443}
 
 
 def send_telegram(token, chat_id, text):
+    if not text or not text.strip():
+        print("[*] Skipping Telegram notification: empty message body.")
+        return True
+
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
@@ -105,7 +109,7 @@ def main():
     target = args.target or cfg.get("target")
     ports = args.ports or cfg.get("ports", DEFAULT_COMMON_PORTS)
     output = args.output or cfg.get("output", DEFAULT_OUTPUT_FILE)
-    auto_cve_tag = cfg.get("auto_cve_tag_for_http", True) and not _config_has_nuclei_tags(cfg)
+    auto_cve_tag = cfg.get("auto_cve_tag_for_http", False) and not _config_has_nuclei_tags(cfg)
 
     if not target:
         print("[-] Target is required (via --target or config.yaml target).")

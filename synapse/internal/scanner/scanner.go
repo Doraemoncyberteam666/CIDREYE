@@ -2,8 +2,10 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +60,10 @@ type ScanTask struct {
 
 // Run executes the scan with the given IPs and ports.
 func (s *Scanner) Run(ctx context.Context, ips <-chan string, ports []int) error {
+	if err := s.validateConfig(); err != nil {
+		return err
+	}
+
 	tasks := make(chan ScanTask, s.cfg.Concurrency*2)
 	var wg sync.WaitGroup
 
@@ -118,6 +124,19 @@ func (s *Scanner) Run(ctx context.Context, ips <-chan string, ports []int) error
 	}
 
 	return nil
+}
+
+func (s *Scanner) validateConfig() error {
+	switch {
+	case s.cfg.Concurrency <= 0:
+		return errors.New("scanner concurrency must be greater than 0")
+	case s.cfg.Timeout <= 0:
+		return errors.New("scanner timeout must be greater than 0")
+	case s.cfg.Retries < 0:
+		return errors.New("scanner retries cannot be negative")
+	default:
+		return nil
+	}
 }
 
 func (s *Scanner) worker(ctx context.Context, wg *sync.WaitGroup, tasks <-chan ScanTask) {
@@ -196,6 +215,7 @@ func (s *Scanner) OpenTargets() []string {
 	for target := range s.openTargets {
 		targets = append(targets, target)
 	}
+	sort.Strings(targets)
 	return targets
 }
 

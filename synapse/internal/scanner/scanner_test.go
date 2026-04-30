@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"synapse/internal/output"
 	"testing"
@@ -77,5 +78,78 @@ func TestScanner_Run(t *testing.T) {
 	}
 	if !strings.Contains(outStr, "SSH-2.0-TestServer") {
 		t.Errorf("Expected banner output, got: %s", outStr)
+	}
+}
+
+func TestScanner_Run_InvalidConfig(t *testing.T) {
+	writer, err := output.NewWriter("", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr string
+	}{
+		{
+			name: "zero concurrency",
+			cfg: Config{
+				Concurrency: 0,
+				Timeout:     500 * time.Millisecond,
+			},
+			wantErr: "scanner concurrency must be greater than 0",
+		},
+		{
+			name: "zero timeout",
+			cfg: Config{
+				Concurrency: 1,
+				Timeout:     0,
+			},
+			wantErr: "scanner timeout must be greater than 0",
+		},
+		{
+			name: "negative retries",
+			cfg: Config{
+				Concurrency: 1,
+				Timeout:     500 * time.Millisecond,
+				Retries:     -1,
+			},
+			wantErr: "scanner retries cannot be negative",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := New(tc.cfg, writer)
+			ips := make(chan string)
+			close(ips)
+			err := sc.Run(context.Background(), ips, nil)
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("Run() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestScanner_OpenTargets_Sorted(t *testing.T) {
+	sc := &Scanner{
+		openTargets: map[string]struct{}{
+			"10.0.0.2:443": {},
+			"10.0.0.1:22":  {},
+			"10.0.0.1:80":  {},
+		},
+	}
+
+	got := sc.OpenTargets()
+	want := []string{
+		"10.0.0.1:22",
+		"10.0.0.1:80",
+		"10.0.0.2:443",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OpenTargets() = %v, want %v", got, want)
 	}
 }

@@ -1,5 +1,6 @@
 import socket
 
+
 def run(ip, port):
     if port not in (80, 8080, 443, 8443):
         return None
@@ -12,6 +13,6 @@ def run(ip, port):
                     return f"[INFO] HTTP service responded on {ip}:{port}"
             else:
                 return f"[INFO] HTTPS service appears open on {ip}:{port}"
-    except Exception:
+    except OSError:
         return None
     return None
