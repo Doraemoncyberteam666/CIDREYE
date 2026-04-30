@@ -1,5 +1,3 @@
-import paramiko
-
 DEFAULT_CREDS = [
     ("admin", "admin"),
     ("admin", "password"),
@@ -11,6 +9,11 @@ DEFAULT_CREDS = [
 def run(ip, port):
     if port != 22:
         return None
+    try:
+        import paramiko
+    except Exception:
+        return None
+
     for user, pwd in DEFAULT_CREDS:
         try:
             client = paramiko.SSHClient()

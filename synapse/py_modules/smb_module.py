@@ -1,6 +1,8 @@
-import smbclient
-
 def run(ip, port):
+    try:
+        import smbclient
+    except Exception:
+        return None
     if port not in (139, 445):
         return None
     for smb_port in (445, 139):

@@ -56,3 +56,17 @@ func TestParseTop(t *testing.T) {
 		t.Errorf("Parse(top1000) length = %d, want around 1000", len(got1000))
 	}
 }
+
+func TestParseTopNoDuplicates(t *testing.T) {
+	got, err := Parse("top100")
+	if err != nil {
+		t.Fatalf("Parse(top100) error = %v", err)
+	}
+	seen := map[int]bool{}
+	for _, p := range got {
+		if seen[p] {
+			t.Fatalf("duplicate port found in top100 list: %d", p)
+		}
+		seen[p] = true
+	}
+}
