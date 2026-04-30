@@ -12,7 +12,7 @@ from py_modules import run_modules
 
 DEFAULT_OUTPUT_FILE = "synapse_results.jsonl"
 DEFAULT_COMMON_PORTS = "21,22,80,443,3306,5432,6379,139,445,8080,8443"
-HTTP_PORTS = {80, 443, 8080, 8443}
+WEB_PORTS = {80, 81, 443, 591, 593, 8000, 8080, 8081, 8443, 8888, 3000, 5000, 7001}
 
 
 def send_telegram(token, chat_id, text):
@@ -38,7 +38,7 @@ def load_config(config_path):
         return yaml.safe_load(f) or {}
 
 
-def _has_http_ports(ports: str) -> bool:
+def _has_web_ports(ports: str) -> bool:
     for part in ports.split(","):
         part = part.strip()
         if not part:
@@ -48,11 +48,11 @@ def _has_http_ports(ports: str) -> bool:
                 start_i, end_i = map(int, part.split("-", 1))
             except ValueError:
                 continue
-            if any(start_i <= p <= end_i for p in HTTP_PORTS):
+            if any(start_i <= p <= end_i for p in WEB_PORTS):
                 return True
         else:
             try:
-                if int(part) in HTTP_PORTS:
+                if int(part) in WEB_PORTS:
                     return True
             except ValueError:
                 continue
@@ -70,7 +70,7 @@ def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, ext
     cmd = [binary_path, "-t", target, "-p", ports, "-o", output_file, "--json", "--quiet"]
     if extra_args:
         cmd.extend(extra_args)
-    if auto_cve_tag and _has_http_ports(ports) and not any(arg.startswith("--nuclei-tags") for arg in (extra_args or [])):
+    if auto_cve_tag and _has_web_ports(ports) and not any(arg.startswith("--nuclei-tags") for arg in (extra_args or [])):
         cmd.extend(["--nuclei-tags", "cve"])
 
     if os.path.exists(output_file):
@@ -109,7 +109,7 @@ def main():
     target = args.target or cfg.get("target")
     ports = args.ports or cfg.get("ports", DEFAULT_COMMON_PORTS)
     output = args.output or cfg.get("output", DEFAULT_OUTPUT_FILE)
-    auto_cve_tag = cfg.get("auto_cve_tag_for_http", True) and not _config_has_nuclei_tags(cfg)
+    auto_cve_tag = cfg.get("auto_cve_tag_for_web", cfg.get("auto_cve_tag_for_http", False)) and not _config_has_nuclei_tags(cfg)
 
     if not target:
         print("[-] Target is required (via --target or config.yaml target).")
