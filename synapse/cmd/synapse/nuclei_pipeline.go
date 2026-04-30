@@ -58,7 +58,7 @@ func RunNucleiPipeline(writer *output.Writer, openTargets []string, cfg NucleiCo
 		outputFile = "nuclei-results.txt"
 	}
 
-	args := []string{"-l", targetsFile.Name(), "-as", "-severity", severityFilter(minSeverity), "-o", outputFile}
+	args := []string{"-l", targetsFile.Name(), "-as", "-severity", severityFilter(minSeverity), "-nc", "-o", outputFile}
 	if cfg.Tags != "" {
 		args = append(args, "-tags", cfg.Tags)
 	}
@@ -72,7 +72,12 @@ func RunNucleiPipeline(writer *output.Writer, openTargets []string, cfg NucleiCo
 	}
 
 	if cfg.Telegram.Enabled {
-		if err := sendToTelegram(cfg.Telegram, outputFile); err != nil {
+		filteredFile, err := filterCriticalHigh(outputFile)
+		if err != nil {
+			return fmt.Errorf("filter telegram output: %w", err)
+		}
+		defer os.Remove(filteredFile)
+		if err := sendToTelegram(cfg.Telegram, filteredFile); err != nil {
 			return fmt.Errorf("telegram send failed: %w", err)
 		}
 		writer.Log("Nuclei output sent to Telegram chat %s", cfg.Telegram.ChatID)
@@ -147,4 +152,34 @@ func sendToTelegram(cfg TelegramConfig, filePath string) error {
 		return fmt.Errorf("telegram API returned status %s", resp.Status)
 	}
 	return nil
+}
+
+func filterCriticalHigh(inputFile string) (string, error) {
+	file, err := os.Open(inputFile)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	outFile, err := os.CreateTemp("", "synapse-telegram-*.txt")
+	if err != nil {
+		return "", err
+	}
+	defer outFile.Close()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "[critical]") || strings.Contains(line, "[high]") {
+			if _, err := outFile.WriteString(line + "\n"); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	return outFile.Name(), nil
 }
