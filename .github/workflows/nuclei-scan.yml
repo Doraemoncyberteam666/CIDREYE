@@ -1,0 +1,152 @@
+name: Nuclei Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      ip_ranges:
+        description: "IP ranges to scan (single IP, CIDR, or comma/space/newline-separated list, e.g. 192.168.1.0/24,10.0.0.0/16)"
+        required: true
+        type: string
+      ports:
+        description: "Ports to scan (e.g. 80,443 or 1-1000 or top100/top1000)"
+        required: false
+        type: string
+        default: "top1000"
+      nuclei_tags:
+        description: "Comma-separated nuclei tags filter (optional)"
+        required: false
+        type: string
+        default: ""
+      nuclei_min_severity:
+        description: "Minimum nuclei severity"
+        required: false
+        type: choice
+        default: "high"
+        options:
+          - info
+          - low
+          - medium
+          - high
+          - critical
+      concurrency:
+        description: "Synapse concurrency level"
+        required: false
+        type: string
+        default: "2000"
+      rate_limit:
+        description: "Synapse rate limit (connections/sec, 0 = unlimited)"
+        required: false
+        type: string
+        default: "5000"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan IP ranges with synapse + nuclei
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: synapse/go.mod
+          cache-dependency-path: synapse/go.sum
+
+      - name: Build synapse
+        working-directory: synapse
+        run: go build -o synapse ./cmd/synapse
+
+      - name: Install nuclei
+        run: |
+          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Update nuclei templates
+        run: |
+          nuclei -update-templates -silent || true
+          nuclei -version
+
+      - name: Raise file descriptor limit
+        run: |
+          ulimit -n 65535 || true
+          echo "ulimit: $(ulimit -n)"
+
+      - name: Prepare targets file from input
+        id: targets
+        env:
+          IP_RANGES: ${{ inputs.ip_ranges }}
+        run: |
+          set -euo pipefail
+          mkdir -p scan-artifacts
+          # Split on commas, spaces, semicolons, and newlines; drop empties; dedupe (preserve order)
+          python3 - <<'PY' > scan-artifacts/targets.txt
+          import os, re
+          raw = os.environ.get("IP_RANGES", "")
+          parts = [p.strip() for p in re.split(r"[\s,;]+", raw) if p.strip()]
+          seen, out = set(), []
+          for p in parts:
+              if p not in seen:
+                  seen.add(p)
+                  out.append(p)
+          print("\n".join(out))
+          PY
+          echo "Targets:"
+          cat scan-artifacts/targets.txt
+          count=$(grep -c -v '^$' scan-artifacts/targets.txt || true)
+          if [ "${count:-0}" -eq 0 ]; then
+            echo "::error::No valid IP ranges parsed from input"
+            exit 1
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Run synapse + nuclei pipeline
+        working-directory: synapse
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.CHAT_ID }}
+          PORTS: ${{ inputs.ports }}
+          NUCLEI_TAGS: ${{ inputs.nuclei_tags }}
+          NUCLEI_MIN_SEVERITY: ${{ inputs.nuclei_min_severity }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+          RATE_LIMIT: ${{ inputs.rate_limit }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::BOT_TOKEN and CHAT_ID repository secrets must be configured"
+            exit 1
+          fi
+
+          args=(
+            -t "../scan-artifacts/targets.txt"
+            -p "$PORTS"
+            -c "$CONCURRENCY"
+            -rate "$RATE_LIMIT"
+            --progress
+            -o "../scan-artifacts/synapse-results.jsonl"
+            --json
+            --nuclei
+            --nuclei-min-severity "$NUCLEI_MIN_SEVERITY"
+            --nuclei-output "../scan-artifacts/nuclei-results.txt"
+            --telegram
+            --telegram-token "$TELEGRAM_BOT_TOKEN"
+            --telegram-chat-id "$TELEGRAM_CHAT_ID"
+          )
+          if [ -n "$NUCLEI_TAGS" ]; then
+            args+=(--nuclei-tags "$NUCLEI_TAGS")
+          fi
+
+          ./synapse "${args[@]}"
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cidreye-scan-results
+          path: scan-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
