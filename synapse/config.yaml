@@ -1,0 +1,20 @@
+# Default wrapper configuration
+# Override any of these via CLI flags.
+target: ""
+ports: "21,22,80,443,3306,5432,6379,139,445,8080,8443"
+output: "synapse_results.jsonl"
+auto_cve_tag_for_http: true
+
+modules:
+  ftp: true
+  smb: true
+  ssh: true
+  service_detect: true
+  redis: true
+  mysql: true
+  postgres: true
+  http: true
+
+telegram:
+  bot_token: ""
+  chat_id: ""

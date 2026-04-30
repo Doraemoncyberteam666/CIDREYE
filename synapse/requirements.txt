@@ -1,2 +1,3 @@
 smbprotocol
 paramiko
+pyyaml

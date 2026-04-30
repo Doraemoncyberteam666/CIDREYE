@@ -75,3 +75,51 @@ CLI flags take precedence over the YAML configuration.
 
 ## Performance Target
 SYNapse is tuned for minimal memory allocation and fast throughput. Depending on your system and network configuration, it can handle a massive number of concurrent connections (50k-200k+/sec). You may need to increase your OS file descriptor limits (`ulimit -n`) for optimal performance on large ranges.
+
+## Python Wrapper (config.yaml-based)
+
+The Python wrapper now uses `config.yaml` for clean modular control.
+
+### 1) Configure defaults in `config.yaml`
+
+```yaml
+target: "10.0.0.0/24"
+ports: "21,22,80,443,3306,5432,6379,139,445,8080,8443"
+output: "synapse_results.jsonl"
+auto_cve_tag_for_http: true
+
+modules:
+  ftp: true
+  smb: false
+  ssh: true
+  service_detect: true
+  redis: true
+  mysql: true
+  postgres: true
+  http: true
+
+telegram:
+  bot_token: "123456:ABCDEF"
+  chat_id: "123456789"
+```
+
+### 2) Module layout
+
+Each module is separated under `py_modules/`:
+- `ftp_module.py`
+- `smb_module.py`
+- `ssh_module.py`
+- `service_detect_module.py`
+- `redis_module.py`
+- `mysql_module.py`
+- `postgres_module.py`
+- `http_module.py`
+- `runner.py`
+
+### 3) Run
+
+```bash
+python3 synapse.py --config config.yaml
+```
+
+CLI values like `--target`, `--ports`, and `--output` override `config.yaml`.
