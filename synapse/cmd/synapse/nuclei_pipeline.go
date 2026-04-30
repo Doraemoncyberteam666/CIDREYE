@@ -77,6 +77,16 @@ func RunNucleiPipeline(writer *output.Writer, openTargets []string, cfg NucleiCo
 			return fmt.Errorf("filter telegram output: %w", err)
 		}
 		defer os.Remove(filteredFile)
+
+		hasContent, err := hasFileContent(filteredFile)
+		if err != nil {
+			return fmt.Errorf("check filtered telegram output: %w", err)
+		}
+		if !hasContent {
+			writer.Log("No HIGH/CRITICAL nuclei findings to send to Telegram. Skipping upload.")
+			return nil
+		}
+
 		if err := sendToTelegram(cfg.Telegram, filteredFile); err != nil {
 			return fmt.Errorf("telegram send failed: %w", err)
 		}
@@ -182,4 +192,12 @@ func filterCriticalHigh(inputFile string) (string, error) {
 	}
 
 	return outFile.Name(), nil
+}
+
+func hasFileContent(filePath string) (bool, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return false, err
+	}
+	return info.Size() > 0, nil
 }
