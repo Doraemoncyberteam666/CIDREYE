@@ -47,6 +47,13 @@ jobs:
     name: Scan IP ranges with synapse + nuclei
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
+    env:
+      ARTIFACT_DIR: scan-artifacts
+      TARGET_FILE: scan-artifacts/targets.txt
+      SYNAPSE_JSONL: scan-artifacts/synapse-results.jsonl
+      NUCLEI_OUT: scan-artifacts/nuclei-results.txt
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,18 +70,15 @@ jobs:
 
       - name: Install nuclei
         run: |
+          set -euo pipefail
           go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Update nuclei templates
         run: |
+          set -euo pipefail
           nuclei -update-templates -silent || true
           nuclei -version
-
-      - name: Raise file descriptor limit
-        run: |
-          ulimit -n 65535 || true
-          echo "ulimit: $(ulimit -n)"
 
       - name: Prepare targets file from input
         id: targets
@@ -82,26 +86,30 @@ jobs:
           IP_RANGES: ${{ inputs.ip_ranges }}
         run: |
           set -euo pipefail
-          mkdir -p scan-artifacts
-          # Split on commas, spaces, semicolons, and newlines; drop empties; dedupe (preserve order)
-          python3 - <<'PY' > scan-artifacts/targets.txt
+          mkdir -p "$ARTIFACT_DIR"
+
+          python3 - <<'PY' > "$TARGET_FILE"
           import os, re
           raw = os.environ.get("IP_RANGES", "")
           parts = [p.strip() for p in re.split(r"[\s,;]+", raw) if p.strip()]
-          seen, out = set(), []
+          seen = set()
+          out = []
           for p in parts:
               if p not in seen:
                   seen.add(p)
                   out.append(p)
           print("\n".join(out))
           PY
+
           echo "Targets:"
-          cat scan-artifacts/targets.txt
-          count=$(grep -c -v '^$' scan-artifacts/targets.txt || true)
+          cat "$TARGET_FILE"
+
+          count="$(grep -c -v '^$' "$TARGET_FILE" || true)"
           if [ "${count:-0}" -eq 0 ]; then
             echo "::error::No valid IP ranges parsed from input"
             exit 1
           fi
+
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
       - name: Run synapse + nuclei pipeline
@@ -116,26 +124,31 @@ jobs:
           RATE_LIMIT: ${{ inputs.rate_limit }}
         run: |
           set -euo pipefail
+
+          ulimit -n 65535 || true
+          echo "ulimit: $(ulimit -n)"
+
           if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
             echo "::error::BOT_TOKEN and CHAT_ID repository secrets must be configured"
             exit 1
           fi
 
           args=(
-            -t "../scan-artifacts/targets.txt"
+            -t "../$TARGET_FILE"
             -p "$PORTS"
             -c "$CONCURRENCY"
             -rate "$RATE_LIMIT"
             --progress
-            -o "../scan-artifacts/synapse-results.jsonl"
+            -o "../$SYNAPSE_JSONL"
             --json
             --nuclei
             --nuclei-min-severity "$NUCLEI_MIN_SEVERITY"
-            --nuclei-output "../scan-artifacts/nuclei-results.txt"
+            --nuclei-output "../$NUCLEI_OUT"
             --telegram
             --telegram-token "$TELEGRAM_BOT_TOKEN"
             --telegram-chat-id "$TELEGRAM_CHAT_ID"
           )
+
           if [ -n "$NUCLEI_TAGS" ]; then
             args+=(--nuclei-tags "$NUCLEI_TAGS")
           fi
