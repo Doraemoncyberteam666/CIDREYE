@@ -55,6 +55,13 @@ def _has_http_ports(ports: str) -> bool:
     return False
 
 
+def _config_has_nuclei_tags(cfg):
+    if cfg.get("nuclei_tags"):
+        return True
+    nuclei_cfg = cfg.get("nuclei", {})
+    return bool(nuclei_cfg.get("tags"))
+
+
 def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, extra_args=None, auto_cve_tag=True):
     cmd = [binary_path, "-t", target, "-p", ports, "-o", output_file, "--json", "--quiet"]
     if extra_args:
@@ -89,13 +96,16 @@ def main():
     parser.add_argument("-p", "--ports", help="Ports to scan")
     parser.add_argument("-o", "--output", help="Output JSONL file")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML (default: config.yaml)")
+    parser.add_argument("--telegram-token", help="Legacy wrapper telegram token")
+    parser.add_argument("--telegram-chat", help="Legacy wrapper telegram chat ID")
+    parser.add_argument("--telegram-chat-id", help="Telegram chat ID alias")
     args, extra = parser.parse_known_args()
 
     cfg = load_config(args.config)
     target = args.target or cfg.get("target")
     ports = args.ports or cfg.get("ports", DEFAULT_COMMON_PORTS)
     output = args.output or cfg.get("output", DEFAULT_OUTPUT_FILE)
-    auto_cve_tag = cfg.get("auto_cve_tag_for_http", True)
+    auto_cve_tag = cfg.get("auto_cve_tag_for_http", True) and not _config_has_nuclei_tags(cfg)
 
     if not target:
         print("[-] Target is required (via --target or config.yaml target).")
@@ -114,10 +124,11 @@ def main():
     findings = run_modules(results, enabled_modules=enabled_modules)
 
     telegram = cfg.get("telegram", {})
-    token = telegram.get("bot_token")
-    chat = telegram.get("chat_id")
-    if findings and token and chat:
-        msg = "SYNapse Module Findings:\n" + "\n".join(findings)
+    token = args.telegram_token or telegram.get("bot_token")
+    chat = args.telegram_chat or args.telegram_chat_id or telegram.get("chat_id")
+    alert_findings = [f for f in findings if f.startswith("[HIGH]") or f.startswith("[CRITICAL]")]
+    if alert_findings and token and chat:
+        msg = "SYNapse Module Findings:\n" + "\n".join(alert_findings)
         send_telegram(token, chat, msg)
 
 
