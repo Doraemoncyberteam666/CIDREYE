@@ -1,5 +1,6 @@
 import socket
 
+
 def run(ip, port):
     if port != 6379:
         return None
@@ -9,6 +10,6 @@ def run(ip, port):
             data = s.recv(128)
             if b"+PONG" in data:
                 return f"[HIGH] Redis responds to unauthenticated PING on {ip}:6379"
-    except Exception:
+    except OSError:
         return None
     return None
