@@ -16,6 +16,10 @@ HTTP_PORTS = {80, 443, 8080, 8443}
 
 
 def send_telegram(token, chat_id, text):
+    if not text or not text.strip():
+        print("[*] Skipping Telegram notification: empty message body.")
+        return True
+
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
