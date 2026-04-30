@@ -76,24 +76,42 @@ CLI flags take precedence over the YAML configuration.
 ## Performance Target
 SYNapse is tuned for minimal memory allocation and fast throughput. Depending on your system and network configuration, it can handle a massive number of concurrent connections (50k-200k+/sec). You may need to increase your OS file descriptor limits (`ulimit -n`) for optimal performance on large ranges.
 
-## Python Wrapper Enhancements
+## Python Wrapper (config.yaml-based)
 
-The `synapse.py` helper now includes:
+The Python wrapper now uses `config.yaml` for clean modular control.
 
-- Default scan ports for common services: `21,22,80,443,3306,5432,6379,139,445,8080,8443`.
-- Automatic `--nuclei-tags cve` when HTTP/HTTPS ports are present and no nuclei tags are supplied.
-- Per-module toggles:
-  - `--no-ftp-module`
-  - `--no-smb-module`
-  - `--no-ssh-module`
-- Service detection output for common open services via `--detect-services` (e.g., MySQL/MariaDB, PostgreSQL, Redis, SMB, SSH, FTP, HTTP/HTTPS).
-- `.env` support for Telegram credentials:
-  - `TELEGRAM_BOT_TOKEN`
-  - `TELEGRAM_CHAT_ID`
-- Default output file: `synapse_results.jsonl`.
+### 1) Configure defaults in `config.yaml`
 
-Example:
+```yaml
+target: "10.0.0.0/24"
+ports: "21,22,80,443,3306,5432,6379,139,445,8080,8443"
+output: "synapse_results.jsonl"
+auto_cve_tag_for_http: true
+
+modules:
+  ftp: true
+  smb: false
+  ssh: true
+  service_detect: true
+
+telegram:
+  bot_token: "123456:ABCDEF"
+  chat_id: "123456789"
+```
+
+### 2) Module layout
+
+Each module is separated under `py_modules/`:
+- `ftp_module.py`
+- `smb_module.py`
+- `ssh_module.py`
+- `service_detect_module.py`
+- `runner.py`
+
+### 3) Run
 
 ```bash
-python3 synapse.py -t 10.0.0.0/24 --detect-services
+python3 synapse.py --config config.yaml
 ```
+
+CLI values like `--target`, `--ports`, and `--output` override `config.yaml`.

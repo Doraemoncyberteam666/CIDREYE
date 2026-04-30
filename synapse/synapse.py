@@ -6,32 +6,13 @@ import sys
 import urllib.parse
 import urllib.request
 
-from modules import run_modules
+import yaml
+
+from py_modules import run_modules
 
 DEFAULT_OUTPUT_FILE = "synapse_results.jsonl"
-DEFAULT_COMMON_PORTS = (
-    "21,22,80,443,3306,5432,6379,139,445,8080,8443"
-)
-HTTP_PORTS = {80,443,8080,8443}
-
-
-def load_env_file(env_path: str = ".env") -> None:
-    if not os.path.exists(env_path):
-        return
-
-    try:
-        with open(env_path, "r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and key not in os.environ:
-                    os.environ[key] = value
-    except OSError as exc:
-        print(f"[-] Failed to read {env_path}: {exc}")
+DEFAULT_COMMON_PORTS = "21,22,80,443,3306,5432,6379,139,445,8080,8443"
+HTTP_PORTS = {80, 443, 8080, 8443}
 
 
 def send_telegram(token, chat_id, text):
@@ -46,6 +27,13 @@ def send_telegram(token, chat_id, text):
         return False
 
 
+def load_config(config_path):
+    if not os.path.exists(config_path):
+        return {}
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
 def _has_http_ports(ports: str) -> bool:
     for part in ports.split(","):
         part = part.strip()
@@ -53,13 +41,11 @@ def _has_http_ports(ports: str) -> bool:
             continue
         if "-" in part:
             try:
-                start, end = part.split("-", 1)
-                start_i, end_i = int(start), int(end)
+                start_i, end_i = map(int, part.split("-", 1))
             except ValueError:
                 continue
-            for p in HTTP_PORTS:
-                if start_i <= p <= end_i:
-                    return True
+            if any(start_i <= p <= end_i for p in HTTP_PORTS):
+                return True
         else:
             try:
                 if int(part) in HTTP_PORTS:
@@ -69,12 +55,11 @@ def _has_http_ports(ports: str) -> bool:
     return False
 
 
-def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, extra_args=None):
+def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, extra_args=None, auto_cve_tag=True):
     cmd = [binary_path, "-t", target, "-p", ports, "-o", output_file, "--json", "--quiet"]
     if extra_args:
         cmd.extend(extra_args)
-
-    if _has_http_ports(ports) and not any(arg.startswith("--nuclei-tags") for arg in (extra_args or [])):
+    if auto_cve_tag and _has_http_ports(ports) and not any(arg.startswith("--nuclei-tags") for arg in (extra_args or [])):
         cmd.extend(["--nuclei-tags", "cve"])
 
     if os.path.exists(output_file):
@@ -82,7 +67,6 @@ def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, ext
 
     print(f"[*] Running SYNapse: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
-
     if result.returncode not in (0, 1):
         print(f"[-] SYNapse failed: {result.stderr}")
 
@@ -90,7 +74,8 @@ def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, ext
     if os.path.exists(output_file):
         with open(output_file, "r", encoding="utf-8") as f:
             for line in f:
-                if line.strip():
+                line = line.strip()
+                if line:
                     try:
                         results.append(json.loads(line))
                     except json.JSONDecodeError:
@@ -99,53 +84,39 @@ def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, ext
 
 
 def main():
-    load_env_file()
-
     parser = argparse.ArgumentParser(description="SYNapse Python Wrapper")
-    parser.add_argument("-t", "--target", required=True, help="Target IP or CIDR")
-    parser.add_argument(
-        "-p",
-        "--ports",
-        default=DEFAULT_COMMON_PORTS,
-        help=f"Ports to scan (default: common services: {DEFAULT_COMMON_PORTS})",
-    )
-    parser.add_argument("-o", "--output", default=DEFAULT_OUTPUT_FILE, help="Output JSONL file")
-    parser.add_argument("--telegram-token", help="Telegram Bot Token (or TELEGRAM_BOT_TOKEN in .env)")
-    parser.add_argument("--telegram-chat", help="Telegram Chat ID (or TELEGRAM_CHAT_ID in .env)")
-    parser.add_argument("--no-ftp-module", action="store_true", help="Disable FTP checks")
-    parser.add_argument("--no-smb-module", action="store_true", help="Disable SMB checks")
-    parser.add_argument("--no-ssh-module", action="store_true", help="Disable SSH default credential checks")
-    parser.add_argument("--detect-services", action="store_true", help="Report common services by open default ports")
-
+    parser.add_argument("-t", "--target", help="Target IP or CIDR")
+    parser.add_argument("-p", "--ports", help="Ports to scan")
+    parser.add_argument("-o", "--output", help="Output JSONL file")
+    parser.add_argument("--config", default="config.yaml", help="Path to config YAML (default: config.yaml)")
     args, extra = parser.parse_known_args()
+
+    cfg = load_config(args.config)
+    target = args.target or cfg.get("target")
+    ports = args.ports or cfg.get("ports", DEFAULT_COMMON_PORTS)
+    output = args.output or cfg.get("output", DEFAULT_OUTPUT_FILE)
+    auto_cve_tag = cfg.get("auto_cve_tag_for_http", True)
+
+    if not target:
+        print("[-] Target is required (via --target or config.yaml target).")
+        sys.exit(1)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     binary_path = os.path.join(script_dir, "synapse")
-
     if not os.path.isfile(binary_path) or not os.access(binary_path, os.X_OK):
         print("[-] SYNapse binary not found or not executable. Please compile it first.")
         sys.exit(1)
 
-    results = run_synapse(binary_path, args.target, args.ports, args.output, extra)
+    results = run_synapse(binary_path, target, ports, output, extra, auto_cve_tag)
     print(f"[*] Found {len(results)} open ports.")
 
-    for res in results:
-        print(f"  - {res.get('ip')}:{res.get('port')} (State: {res.get('state')})")
+    enabled_modules = cfg.get("modules", {"ftp": True, "smb": True, "ssh": True, "service_detect": True})
+    findings = run_modules(results, enabled_modules=enabled_modules)
 
-    print("[*] Running post-scan modules...")
-    findings = run_modules(
-        results,
-        enable_ftp=not args.no_ftp_module,
-        enable_smb=not args.no_smb_module,
-        enable_ssh=not args.no_ssh_module,
-        detect_services=args.detect_services,
-    )
-
-    token = args.telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
-    chat = args.telegram_chat or os.getenv("TELEGRAM_CHAT_ID")
-
+    telegram = cfg.get("telegram", {})
+    token = telegram.get("bot_token")
+    chat = telegram.get("chat_id")
     if findings and token and chat:
-        print("[*] Sending high/critical findings to Telegram...")
         msg = "SYNapse Module Findings:\n" + "\n".join(findings)
         send_telegram(token, chat, msg)
 
