@@ -71,8 +71,26 @@ jobs:
       - name: Install nuclei
         run: |
           set -euo pipefail
-          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+          url="$(curl -fsSL https://api.github.com/repos/projectdiscovery/nuclei/releases/latest \
+            | grep "browser_download_url" \
+            | grep "linux_amd64.zip" \
+            | cut -d '"' -f 4 \
+            | head -n 1)"
+
+          if [ -z "$url" ]; then
+            echo "::error::Failed to resolve latest nuclei linux_amd64 release URL"
+            exit 1
+          fi
+
+          wget -q "$url" -O nuclei.zip
+          unzip -o nuclei.zip
+          chmod +x nuclei
+          sudo mv nuclei /usr/local/bin/nuclei
+
+          rm -f nuclei.zip README.md LICENSE.md LICENSE CHANGELOG.md
+
+          nuclei -version
 
       - name: Update nuclei templates
         run: |
