@@ -9,17 +9,29 @@ class SynapseConfigTests(unittest.TestCase):
             self.skipTest("pyyaml not installed in environment")
         self.synapse = importlib.import_module("synapse")
 
-    def test_has_http_ports_detects_singles_and_ranges(self):
-        self.assertTrue(self.synapse._has_http_ports("80"))
-        self.assertTrue(self.synapse._has_http_ports("1-1024"))
-        self.assertTrue(self.synapse._has_http_ports("8080"))
-        self.assertFalse(self.synapse._has_http_ports("22,3306,5432"))
+    def test_has_web_ports_detects_http_https_and_common_alts(self):
+        self.assertTrue(self.synapse._has_web_ports("80"))
+        self.assertTrue(self.synapse._has_web_ports("443"))
+        self.assertTrue(self.synapse._has_web_ports("8080"))
+        self.assertTrue(self.synapse._has_web_ports("3000"))
+        self.assertTrue(self.synapse._has_web_ports("1-1024"))
+        self.assertFalse(self.synapse._has_web_ports("22,3306,5432"))
 
     def test_config_has_nuclei_tags(self):
         self.assertTrue(self.synapse._config_has_nuclei_tags({"nuclei_tags": "cve,rce"}))
         self.assertTrue(self.synapse._config_has_nuclei_tags({"nuclei": {"tags": "xss"}}))
         self.assertFalse(self.synapse._config_has_nuclei_tags({}))
 
+
+
+    def test_resolve_auto_cve_tag_preserves_default_enabled_behavior(self):
+        self.assertTrue(self.synapse._resolve_auto_cve_tag({}))
+        self.assertTrue(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_http": True}))
+        self.assertFalse(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_http": False}))
+
+    def test_resolve_auto_cve_tag_prefers_web_key_when_present(self):
+        self.assertFalse(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_web": False, "auto_cve_tag_for_http": True}))
+        self.assertTrue(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_web": True, "auto_cve_tag_for_http": False}))
 
     def test_send_telegram_skips_empty_message(self):
         with mock.patch("synapse.urllib.request.urlopen") as urlopen_mock:
