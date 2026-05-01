@@ -10,10 +10,10 @@ class _OkModule:
 class _FailingModule:
     @staticmethod
     def run(ip, port):
-        raise OSError("socket failure")
+        raise RuntimeError("unexpected module failure")
 
 
-def test_run_modules_skips_invalid_results_and_continues_on_oserror():
+def test_run_modules_skips_invalid_results_and_continues_on_module_errors():
     original_registry = dict(runner.MODULE_REGISTRY)
     try:
         runner.MODULE_REGISTRY.clear()

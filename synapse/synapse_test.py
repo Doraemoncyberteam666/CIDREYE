@@ -21,6 +21,16 @@ class SynapseConfigTests(unittest.TestCase):
         self.assertFalse(self.synapse._config_has_nuclei_tags({}))
 
 
+
+    def test_resolve_auto_cve_tag_preserves_default_enabled_behavior(self):
+        self.assertTrue(self.synapse._resolve_auto_cve_tag({}))
+        self.assertTrue(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_http": True}))
+        self.assertFalse(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_http": False}))
+
+    def test_resolve_auto_cve_tag_prefers_web_key_when_present(self):
+        self.assertFalse(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_web": False, "auto_cve_tag_for_http": True}))
+        self.assertTrue(self.synapse._resolve_auto_cve_tag({"auto_cve_tag_for_web": True, "auto_cve_tag_for_http": False}))
+
     def test_send_telegram_skips_empty_message(self):
         with mock.patch("synapse.urllib.request.urlopen") as urlopen_mock:
             ok = self.synapse.send_telegram("token", "chat", "   ")

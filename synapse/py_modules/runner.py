@@ -42,7 +42,7 @@ def run_modules(results, enabled_modules):
         for module in modules:
             try:
                 finding = module.run(ip, port)
-            except OSError:
+            except Exception:
                 continue
             if finding:
                 findings.append(finding)

@@ -66,6 +66,15 @@ def _config_has_nuclei_tags(cfg):
     return bool(nuclei_cfg.get("tags"))
 
 
+
+
+def _resolve_auto_cve_tag(cfg):
+    if "auto_cve_tag_for_web" in cfg:
+        return bool(cfg.get("auto_cve_tag_for_web"))
+    if "auto_cve_tag_for_http" in cfg:
+        return bool(cfg.get("auto_cve_tag_for_http"))
+    return True
+
 def run_synapse(binary_path, target, ports, output_file=DEFAULT_OUTPUT_FILE, extra_args=None, auto_cve_tag=True):
     cmd = [binary_path, "-t", target, "-p", ports, "-o", output_file, "--json", "--quiet"]
     if extra_args:
@@ -109,7 +118,7 @@ def main():
     target = args.target or cfg.get("target")
     ports = args.ports or cfg.get("ports", DEFAULT_COMMON_PORTS)
     output = args.output or cfg.get("output", DEFAULT_OUTPUT_FILE)
-    auto_cve_tag = cfg.get("auto_cve_tag_for_http", False) and not _config_has_nuclei_tags(cfg)
+    auto_cve_tag = _resolve_auto_cve_tag(cfg) and not _config_has_nuclei_tags(cfg)
 
     if not target:
         print("[-] Target is required (via --target or config.yaml target).")
