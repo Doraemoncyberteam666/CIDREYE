@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"strconv"
 	"errors"
 	"fmt"
 	"net"
@@ -161,17 +162,15 @@ func (s *Scanner) worker(ctx context.Context, wg *sync.WaitGroup, tasks <-chan S
 func (s *Scanner) scanPort(ctx context.Context, dialer *net.Dialer, task ScanTask) {
 	defer s.tasksCompleted.Add(1)
 
-	target := fmt.Sprintf("%s:%d", task.IP, task.Port)
+	target := net.JoinHostPort(task.IP, strconv.Itoa(task.Port))
 
 	var conn net.Conn
 	var err error
 
 	for i := 0; i <= s.cfg.Retries; i++ {
 		// Context for the specific dial operation, bounded by dialer timeout
-		dialCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 
-		conn, err = dialer.DialContext(dialCtx, "tcp", target)
-		cancel()
+		conn, err = dialer.DialContext(ctx, "tcp", target)
 
 		if err == nil {
 			break
@@ -186,7 +185,7 @@ func (s *Scanner) scanPort(ctx context.Context, dialer *net.Dialer, task ScanTas
 
 	s.openPortsFound.Add(1)
 	s.openTargetsMu.Lock()
-	s.openTargets[fmt.Sprintf("%s:%d", task.IP, task.Port)] = struct{}{}
+	s.openTargets[target] = struct{}{}
 	s.openTargetsMu.Unlock()
 
 	res := output.Result{
